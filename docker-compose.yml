@@ -1,0 +1,145 @@
+services:
+  # MySQL dla slurmdbd (bazy rachunkowości Slurma)
+  mysql:
+    image: mysql:8.0
+    container_name: eden-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: slurm_acct_db
+      MYSQL_USER: slurm
+      MYSQL_PASSWORD: slurm
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - eden-net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "slurm",
+          "-pslurm",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # PostgreSQL + TimescaleDB dla naszej bazy analitycznej
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: eden-timescaledb
+    environment:
+      POSTGRES_USER: eden
+      POSTGRES_PASSWORD: eden
+      POSTGRES_DB: eden
+    volumes:
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - timescale-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - eden-net
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "eden"]
+      interval: 5s
+      retries: 10
+
+  # Slurm: slurmctld + slurmd + slurmdbd w jednym kontenerze
+  slurm:
+    build: ./slurm
+    container_name: eden-slurm
+    hostname: slurm-node # MUSI pasować do NodeName w slurm.conf
+    privileged: true # Slurm potrzebuje zarządzać procesami
+    depends_on:
+      mysql:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    volumes:
+      # Bind mount: edytuj prolog/epilog bez przebudowy kontenera
+      # Montujemy katalog (nie pojedyncze pliki) - Docker Desktop na macOS
+      # ma problemy z bind-mountem pojedynczych plików (tworzy katalogi zamiast plików)
+      - ./slurm/hooks:/opt/eden-monitor/slurm-hooks
+      - ./example-jobs:/jobs
+      # Współdzielony wolumin z fake-dcgm
+      - dcgm-mapping:/run/dcgm-exporter/job-mapping
+    networks:
+      - eden-net
+
+  # Symulator metryk GPU
+  fake-dcgm:
+    build: ./fake-dcgm
+    container_name: eden-fake-dcgm
+    volumes:
+      - dcgm-mapping:/run/dcgm-exporter/job-mapping:ro
+    ports:
+      - "9400:9400"
+    networks:
+      - eden-net
+
+  # System zbierania metryk
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: eden-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - eden-net
+
+  # Wizualizacja
+  grafana:
+    image: grafana/grafana:latest
+    container_name: eden-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: 1234
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - eden-net
+    depends_on:
+      - prometheus
+
+  snapshot-writer:
+    build: ./snapshot-writer
+    container_name: eden-snapshot-writer
+    networks:
+      - eden-net
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      prometheus:
+        condition: service_started
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    container_name: eden-api
+    ports:
+      - "8000:8000"
+    networks:
+      - eden-net
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  timescale-data:
+  dcgm-mapping:
+  grafana-data:
+
+networks:
+  eden-net:
+    driver: bridge

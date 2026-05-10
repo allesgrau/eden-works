@@ -1,0 +1,19 @@
+groups:
+  - name: gpu_efficiency
+    rules:
+      - alert: IdleGPUWithActiveJob
+        expr: DCGM_FI_DEV_GPU_UTIL{slurm_job_id!=""} < 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU {{ $labels.gpu_index }} bezczynne przy aktywnym zadaniu"
+          description: "Job {{ $labels.slurm_job_id }} używa GPU na {{ $value }}% przez ostatnie 10 minut"
+
+      - alert: GPUOverheating
+        expr: DCGM_FI_DEV_GPU_TEMP > 85
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU {{ $labels.gpu_index }} przegrzewa się ({{ $value }}°C)"

@@ -1,0 +1,22 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090   # hostname = nazwa serwisu Compose
+    isDefault: true
+    editable: true
+
+  - name: TimescaleDB
+    type: postgres
+    url: timescaledb:5432
+    database: eden
+    user: eden
+    secureJsonData:
+      password: eden
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: true
+    editable: true

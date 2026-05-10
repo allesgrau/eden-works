@@ -1,0 +1,17 @@
+global:
+  scrape_interval: 15s # odpytuj źródła co 15 sekund
+  evaluation_interval: 15s # ewaluuj reguły alertów co 15 sekund
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # Nasz fake DCGM exporter
+  - job_name: "dcgm"
+    static_configs:
+      - targets: ["fake-dcgm:9400"] # hostname = nazwa serwisu w Compose
+
+  # Prometheus sam się monitoruje
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
