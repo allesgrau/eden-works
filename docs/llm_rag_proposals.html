@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Propozycje zastosowania LLM i RAG w projekcie Eden</title>
+            <style>
+/* From extension vscode.github */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.vscode-dark img[src$=\#gh-light-mode-only],
+.vscode-light img[src$=\#gh-dark-mode-only],
+.vscode-high-contrast:not(.vscode-high-contrast-light) img[src$=\#gh-light-mode-only],
+.vscode-high-contrast-light img[src$=\#gh-dark-mode-only] {
+	display: none;
+}
+
+</style>
+            
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/markdown.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/Microsoft/vscode/extensions/markdown-language-features/media/highlight.css">
+<style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif;
+                font-size: 14px;
+                line-height: 1.6;
+            }
+        </style>
+        <style>
+.task-list-item {
+    list-style-type: none;
+}
+
+.task-list-item-checkbox {
+    margin-left: -20px;
+    vertical-align: middle;
+    pointer-events: none;
+}
+</style>
+<style>
+:root {
+  --color-note: #0969da;
+  --color-tip: #1a7f37;
+  --color-warning: #9a6700;
+  --color-severe: #bc4c00;
+  --color-caution: #d1242f;
+  --color-important: #8250df;
+}
+
+</style>
+<style>
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-note: #2f81f7;
+    --color-tip: #3fb950;
+    --color-warning: #d29922;
+    --color-severe: #db6d28;
+    --color-caution: #f85149;
+    --color-important: #a371f7;
+  }
+}
+
+</style>
+<style>
+.markdown-alert {
+  padding: 0.5rem 1rem;
+  margin-bottom: 16px;
+  color: inherit;
+  border-left: .25em solid #888;
+}
+
+.markdown-alert>:first-child {
+  margin-top: 0
+}
+
+.markdown-alert>:last-child {
+  margin-bottom: 0
+}
+
+.markdown-alert .markdown-alert-title {
+  display: flex;
+  font-weight: 500;
+  align-items: center;
+  line-height: 1
+}
+
+.markdown-alert .markdown-alert-title .octicon {
+  margin-right: 0.5rem;
+  display: inline-block;
+  overflow: visible !important;
+  vertical-align: text-bottom;
+  fill: currentColor;
+}
+
+.markdown-alert.markdown-alert-note {
+  border-left-color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-note .markdown-alert-title {
+  color: var(--color-note);
+}
+
+.markdown-alert.markdown-alert-important {
+  border-left-color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-important .markdown-alert-title {
+  color: var(--color-important);
+}
+
+.markdown-alert.markdown-alert-warning {
+  border-left-color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-warning .markdown-alert-title {
+  color: var(--color-warning);
+}
+
+.markdown-alert.markdown-alert-tip {
+  border-left-color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-tip .markdown-alert-title {
+  color: var(--color-tip);
+}
+
+.markdown-alert.markdown-alert-caution {
+  border-left-color: var(--color-caution);
+}
+
+.markdown-alert.markdown-alert-caution .markdown-alert-title {
+  color: var(--color-caution);
+}
+
+</style>
+        
+        </head>
+        <body class="vscode-body vscode-light">
+            <h1 id="propozycje-zastosowania-llm-i-rag-w-projekcie-eden">Propozycje zastosowania LLM i RAG w projekcie Eden</h1>
+<p><em>Data: 2026-05-12</em></p>
+<hr>
+<h2 id="przegląd">Przegląd</h2>
+<p>Aktualny stack (Semgrep + metryki + estymator oparty na medianie) działa dobrze dla przypadków, które można opisać regułami lub statystykami. LLM/RAG dają wartość w dwóch miejscach, gdzie reguły i statystyki zawodzą:</p>
+<ol>
+<li><strong>Szacowanie zasobów przez podobieństwo kodu</strong> — hybrid search znajduje historycznie podobne zadania i zwraca ile zasobów faktycznie zużyły</li>
+<li><strong>Wyjaśnianie rekomendacji</strong> — LLM tłumaczy <em>dlaczego</em> ten kod potrzebuje tyle zasobów, edukując użytkowników z tła matematycznego w zakresie HPC</li>
+</ol>
+<hr>
+<h2 id="1-rag-dla-estymatora-zasobów">1. RAG dla estymatora zasobów</h2>
+<h3 id="idea">Idea</h3>
+<p>Użytkownik przesyła skrypt przed uruchomieniem. System embedduje kod, przeszukuje bazę historycznych zadań, odnajduje semantycznie podobny kod i zwraca ile zasobów tamte zadania faktycznie zużyły. Użytkownik widzi: <em>&quot;Twój kod jest podobny do 3 zadań z ostatnich 6 miesięcy. Zajęły średnio 2.4h, 18GB VRAM, efektywność GPU 71%.&quot;</em></p>
+<h3 id="pipeline">Pipeline</h3>
+<pre><code>Kod użytkownika
+      │
+      ├──→ [Dense embedding]   ──→  wektor float
+      │       (cały skrypt)
+      │
+      └──→ [Key phrase extractor]  ──→  sparse wektor
+              (regex/AST)
+                 │
+                 ▼
+           [Qdrant hybrid search]  ──→  top-K job_id  (RRF fusion)
+                 │
+                 ▼
+           [TimescaleDB]  ──→  avg_gpu_util, elapsed, max_rss, efficiency_score
+                 │
+                 ▼
+           [Agregacja]  ──→  Rekomendacja: sugerowane #SBATCH + statystyki podobnych zadań
+</code></pre>
+<h3 id="strategia-retrieval-hybrid-search">Strategia retrieval: hybrid search</h3>
+<p>Czyste wyszukiwanie wektorowe działa dobrze na podobieństwo semantyczne, ale kod ma specyficzną cechę: dwa skrypty mogą być semantycznie bliskie, a jednocześnie różnić się kluczowymi szczegółami (np. jeden używa <code>torch.nn.DataParallel</code>, drugi <code>DistributedDataParallel</code>). Hybrid search łączy dwa sygnały:</p>
+<ul>
+<li><strong>Dense</strong> — embedding całego skryptu, łapie ogólny charakter zadania (training vs inference, rodzaj modelu)</li>
+<li><strong>Sparse</strong> — nie zwykłe słowa kluczowe, ale <strong>key phrases</strong>: importy bibliotek, wywołania GPU API, parametry <code>#SBATCH</code></li>
+</ul>
+<p>Przykładowe key phrases:</p>
+<pre><code>import torch                              
+model.cuda()                            
+DataLoader(num_workers=8)                  
+#SBATCH --gres=gpu:2                      
+torch.nn.parallel.DistributedDataParallel 
+</code></pre>
+<h3 id="co-embedować">Co embedować</h3>
+<p>Cały skrypt = jeden wektor, bez chunkowania. Skrypt Slurm jest z reguły krótki, embedding całości nie traci sygnału i upraszcza retrieval.</p>
+<h3 id="jakie-przykładowe-key-phrases-ekstrahować">Jakie przykładowe key phrases ekstrahować</h3>
+<pre><code class="language-python">KEY_PHRASE_PATTERNS = [
+    <span class="hljs-string">r&quot;^import\s+\S+&quot;</span>,                          <span class="hljs-comment"># importy bibliotek</span>
+    <span class="hljs-string">r&quot;^from\s+\S+\s+import&quot;</span>,                   <span class="hljs-comment"># from-import</span>
+    <span class="hljs-string">r&quot;\.\s*cuda\(\)&quot;</span>,                          <span class="hljs-comment"># przeniesienie na GPU</span>
+    <span class="hljs-string">r&quot;device\s*=\s*[&#x27;\&quot;]cuda[&#x27;\&quot;]&quot;</span>,            <span class="hljs-comment"># device=&#x27;cuda&#x27;</span>
+    <span class="hljs-string">r&quot;DataLoader\s*\(&quot;</span>,                        <span class="hljs-comment"># DataLoader (num_workers, pin_memory)</span>
+    <span class="hljs-string">r&quot;#SBATCH\s+--\S+&quot;</span>,                        <span class="hljs-comment"># parametry SBATCH</span>
+    <span class="hljs-string">r&quot;torch\.nn\.\w+Parallel&quot;</span>,                 <span class="hljs-comment"># strategie równoległości</span>
+    <span class="hljs-string">r&quot;amp\.autocast|GradScaler&quot;</span>,               <span class="hljs-comment"># mixed precision</span>
+    <span class="hljs-string">r&quot;torch\.utils\.checkpoint&quot;</span>,               <span class="hljs-comment"># gradient checkpointing</span>
+    <span class="hljs-string">r&quot;\.to\(device\)|\.to\([&#x27;\&quot;]cuda&quot;</span>,         <span class="hljs-comment"># jawne przeniesienie tensora</span>
+]
+</code></pre>
+<h3 id="tech-stack">Tech stack</h3>
+<table>
+<thead>
+<tr>
+<th>Komponent</th>
+<th>Rekomendacja</th>
+<th>Powód</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Embedding (dense)</td>
+<td><code>BAAI/bge-small-en</code></td>
+<td>Lokalny, prywatny, dobry na kod</td>
+</tr>
+<tr>
+<td>Sparse (key phrases)</td>
+<td>własny ekstraktor regex/AST</td>
+<td>Pełna kontrola nad tym co jest &quot;słowem kluczowym&quot;</td>
+</tr>
+<tr>
+<td>Vector store</td>
+<td><strong>Qdrant</strong></td>
+<td>Natywny hybrid search (dense + sparse w jednym zapytaniu)</td>
+</tr>
+<tr>
+<td>Fusion</td>
+<td><code>alpha</code> w Qdrant Query API</td>
+<td>Qdrant łączy oba wyniki wewnętrznie, bez dodatkowego kodu</td>
+</tr>
+<tr>
+<td>Generacja</td>
+<td>któryś model Anthropic</td>
+<td>Są najlepsze</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h2 id="2-llm-jako-wyjaśnienie-rekomendacji-zasobów">2. LLM jako wyjaśnienie rekomendacji zasobów</h2>
+<h3 id="kontekst-i-problem">Kontekst i problem</h3>
+<p>Sekcja 1 zwraca rekomendację w postaci liczb: <em>&quot;podobne zadania potrzebowały 18GB VRAM, 2 GPU, czas 2.4h&quot;</em>. Użytkownik nietechniczny widzi te liczby, ale nie rozumie <em>dlaczego</em> jego kod wymaga tyle zasobów — i przez to albo ignoruje rekomendację, albo nie wie jak zoptymalizować skrypt żeby potrzebował mniej.</p>
+<p>LLM wypełnia tę lukę. Wejście to rekomendacja z sekcji 1 plus wyniki Semgrep (który wykrywa konkretne wzorce w kodzie wpływające na zużycie zasobów). Wyjście to wyjaśnienie skrojone pod odbiorców bez tła HPC.</p>
+<p>Przykład: Semgrep wykrywa transfer CPU→GPU w pętli. LLM tłumaczy że to powód, dla którego GPU jest zajęte tylko 38% czasu (co widać w <code>avg_gpu_util</code> z historycznych zadań), a tym samym dlaczego zadanie potrzebuje więcej czasu niż mogłoby. Użytkownik rozumie połączenie między kodem a metrykami.</p>
+<h3 id="cel-edukacyjny">Cel edukacyjny</h3>
+<p>LLM pełni tutaj rolę nie tylko asystenta do naprawy kodu, ale <strong>tutora HPC</strong>. Każde wykryte przez Semgrep naruszenie jest okazją, żeby wyjaśnić użytkownikowi jeden konkretny mechanizm działania GPU lub klastra. Użytkownicy, którzy regularnie otrzymują takie wyjaśnienia, z czasem przestają popełniać te same błędy — zmniejsza się liczba zadań z niską efektywnością.</p>
+<h3 id="llm-jako-post-processor">LLM jako post-processor</h3>
+<p>Po uruchomieniu Semgrep na kodzie użytkownika wyniki JSON trafiają do LLM razem z fragmentem kodu. Prompt jest skrojony pod odbiorców bez tła HPC:</p>
+<pre><code>Oto wyniki analizy statycznej kodu HPC:
+[JSON z Semgrep]
+
+Oto odpowiedni fragment kodu:
+[linie 40-45 z pliku]
+
+Wyjaśnij po polsku, zakładając że odbiorca jest bardzo inteligentny, ale nie zna wzorców HPC:
+1. Co fizycznie dzieje się w GPU gdy uruchamia się ten kod (dlaczego jest wolno)
+2. Jaką konkretną zmianę wprowadzić (pokaż before/after)
+3. Skąd bierze się przyspieszenie — intuicja, nie tylko liczba
+</code></pre>
+<p>Przykład wyjścia dla reguły <code>cpu-gpu-transfer-in-loop</code>:</p>
+<blockquote>
+<p><strong>Linia 42 — transfer CPU→GPU w pętli</strong></p>
+<p>Twój kod tworzy tensor na CPU (<code>torch.tensor(x)</code>) i dopiero potem przenosi go na GPU (<code>.cuda()</code>). GPU i CPU to dwa oddzielne układy z oddzielną pamięcią — każdy transfer przez magistralę PCIe ma stały narzut rzędu 50–200 μs, niezależnie od rozmiaru danych. Przy 1000 iteracjach pętli sumarycznie tracisz do 0.2 sekundy tylko na przesyłanie — zanim GPU w ogóle zacznie liczyć.</p>
+<p><strong>Zmiana:</strong></p>
+<pre><code class="language-python"><span class="hljs-comment"># Przed</span>
+<span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> data:
+    t = torch.tensor(x).cuda()
+
+<span class="hljs-comment"># Po</span>
+<span class="hljs-keyword">for</span> x <span class="hljs-keyword">in</span> data:
+    t = torch.tensor(x, device=<span class="hljs-string">&#x27;cuda&#x27;</span>)
+</code></pre>
+<p>GPU otrzymuje dane bezpośrednio w swojej pamięci, bez pośredniego etapu na CPU. Przy małych tensorach różnica może być 3–10x dla samej pętli.</p>
+</blockquote>
+<h3 id="kategorie-reguł-i-co-llm-wyjaśnia">Kategorie reguł i co LLM wyjaśnia</h3>
+<p>Każda reguła Semgrep należy do kategorii — LLM dostosowuje poziom wyjaśnienia:</p>
+<table>
+<thead>
+<tr>
+<th>Kategoria reguły</th>
+<th>Co LLM tłumaczy</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transfer CPU↔GPU</td>
+<td>Architektura pamięci GPU vs CPU, koszt PCIe</td>
+</tr>
+<tr>
+<td>Synchronizacja (<code>.item()</code>, <code>.numpy()</code> w pętli)</td>
+<td>Dlaczego GPU pipeline jest asynchroniczny</td>
+</tr>
+<tr>
+<td>Alokacja pamięci w pętli</td>
+<td>VRAM fragmentation, GC overhead</td>
+</tr>
+<tr>
+<td>Brak <code>pin_memory</code> / <code>num_workers</code></td>
+<td>Jak DataLoader nakłada się z GPU kernelami</td>
+</tr>
+<tr>
+<td>Over-provisioning GPU</td>
+<td>Koszt dla innych użytkowników klastra, scheduler fairness</td>
+</tr>
+<tr>
+<td>Brak mixed precision</td>
+<td>Czym jest FP16/BF16, kiedy nie traci się precyzji</td>
+</tr>
+</tbody>
+</table>
+<h3 id="dwa-tryby-odpowiedzi">Dwa tryby odpowiedzi</h3>
+<p>Nie każdy użytkownik chce pełnego wykładu. LLM generuje odpowiedź w dwóch blokach:</p>
+<pre><code>[KRÓTKO] Przenosisz dane CPU→GPU w pętli. Użyj device='cuda' przy tworzeniu tensora. ~3x szybciej.
+
+[WYJAŚNIENIE] GPU i CPU mają oddzielną pamięć...
+</code></pre>
+<p>API zwraca oba. Frontend pokazuje tylko krótkie podsumowanie z opcją rozwinięcia — użytkownik który już rozumie problem klika &quot;pomiń&quot;, nowy użytkownik czyta wyjaśnienie.</p>
+<h3 id="integracja-z-obecnym-pipeline">Integracja z obecnym pipeline</h3>
+<p>Semgrep już jest wybrany jako narzędzie analizy statycznej. LLM to dodatkowa warstwa — nie zmienia reguł ani decyzji o dopuszczeniu zadania do kolejki, tylko wzbogaca feedback:</p>
+<pre><code>sbatch script.py
+   → Semgrep scan (obowiązkowe)
+   → LLM explanation
+   → Wyświetl użytkownikowi przed potwierdzeniem submita
+   → Queue job
+</code></pre>
+<p>Użytkownik widzi ostrzeżenia z wyjaśnieniami zanim zdecyduje czy kontynuować. To nie blokuje — edukuje.</p>
+<hr>
+<h2 id="uwagi-o-prywatności">Uwagi o prywatności</h2>
+<p><strong>RAG estimator (sekcja 1):</strong> architektura jest w pełni lokalna — dense embedding i sparse ekstrakcja w <code>rag-advisor</code>, Qdrant w sieci <code>eden-net</code>. Zewnętrzne API (potrzebne do wygenerowania odpowiedzi w postaci <em>&quot;podobne zadania potrzebowały 18GB VRAM, 2 GPU, czas 2.4h&quot;</em>) dostaje tylko zagregowane metryki z TimescaleDB, nie surowy kod.</p>
+<p><strong>LLM explanation dla Semgrep (sekcja 2):</strong> fragment kodu (~10 linii wokół wykrytego problemu) trafia do zewnętrznego API. To jest ekspozycja danych — kod może zawierać ścieżki, nazwy zmiennych, tokeny zakodowane na sztywno, logikę biznesową.</p>
+<p>Przed wysłaniem fragmentu do API wymagany jest screening:</p>
+<pre><code>[Fragment kodu do wysłania]
+        │
+        ▼
+    [Screener]  →  wykryj wzorce wrażliwe:
+                    - ciągi podobne do tokenów/kluczy API  (regex: [A-Za-z0-9+/]{32,})
+                    - ścieżki do plików z danymi           (regex: /data/, /home/, /scratch/)
+                    - hardcoded credentials                (regex: password=, token=, secret=)
+        │
+        ├── wrażliwe znalezione  →  wyślij do LLM tylko typ reguły + nr linii, bez kodu
+        │                           (&quot;Reguła cpu-gpu-transfer-in-loop, linia 42&quot;)
+        │
+        └── czyste               →  wyślij fragment kodu normalnie
+</code></pre>
+<p>Screener to prosta funkcja regex, nie wymaga osobnego serwisu. Gdy fragment jest zablokowany, LLM i tak może wygenerować generyczne wyjaśnienie reguły — mniej precyzyjne, ale bez ryzyka wycieku.</p>
+
+            
+            
+        </body>
+        </html>

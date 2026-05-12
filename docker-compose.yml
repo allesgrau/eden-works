@@ -65,6 +65,7 @@ services:
       # ma problemy z bind-mountem pojedynczych plików (tworzy katalogi zamiast plików)
       - ./slurm/hooks:/opt/eden-monitor/slurm-hooks
       - ./example-jobs:/jobs
+      - ./scale-estimator:/opt/eden-monitor/scale-estimator
       # Współdzielony wolumin z fake-dcgm
       - dcgm-mapping:/run/dcgm-exporter/job-mapping
     networks:
